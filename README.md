@@ -4,6 +4,10 @@ A night-city flier. Keep the raccoon in the air, slip through the pipes, and gra
 
 Play it: https://mkmviclee.github.io/trash-panada-filghs/
 
+![Raccoon in flight over the city](media/screenshot.png)
+
+[Watch a round](media/gameplay.mp4)
+
 ## How to play
 
 Click, tap, or press Space, Arrow Up, or Enter to flap. The first press starts the round.

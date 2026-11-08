@@ -9,6 +9,7 @@ import {
   PIPE_WIDTH,
   PIPE_GAP,
   BIRD_SIZE,
+  GROUND_HEIGHT,
   PIPE_COLOR,
   PIPE_BORDER_COLOR,
   SKY_GRADIENT_START,
@@ -22,18 +23,28 @@ import {
 } from '../constants';
 import { getTrashPandaRoast } from '../services/geminiService';
 
+type Building = {
+  width: number;
+  height: number;
+  windowPattern: boolean;
+  windows: boolean[];
+};
+
 const GameCanvas: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const requestRef = useRef<number>(0);
   const frameCountRef = useRef<number>(0);
+  const spawnFrameRef = useRef<number>(0);
+  const roastRequestRef = useRef<number>(0);
   
   // Game State (Mutable Refs for Loop Performance)
+  const gameStateRef = useRef<GameState>(GameState.START);
   const birdY = useRef<number>(300);
   const birdVelocity = useRef<number>(0);
   const pipes = useRef<Pipe[]>([]);
   const trashItems = useRef<TrashItem[]>([]);
   const score = useRef<number>(0);
   const nextTrashId = useRef<number>(0);
+  const highScoreRef = useRef<number>(0);
   
   // React State for UI Rendering (Menu, Game Over)
   const [gameState, setGameState] = useState<GameState>(GameState.START);
@@ -43,22 +54,34 @@ const GameCanvas: React.FC = () => {
   const [isLoadingAi, setIsLoadingAi] = useState(false);
   const [canvasSize, setCanvasSize] = useState({ width: 400, height: 600 });
 
-  // Generate static building data for background
-  const buildings = useMemo(() => {
-    return Array.from({ length: 20 }).map(() => ({
-      width: 40 + Math.random() * 60,
-      height: 100 + Math.random() * 200,
-      windowPattern: Math.random() > 0.5
-    }));
+  // Generate static building data for background. Windows are chosen once
+  // so the skyline does not flicker every frame.
+  const buildings = useMemo<Building[]>(() => {
+    return Array.from({ length: 20 }, () => {
+      const width = 40 + Math.random() * 60;
+      const height = 100 + Math.random() * 200;
+      const windowPattern = Math.random() > 0.5;
+      const windows: boolean[] = [];
+      if (windowPattern) {
+        for (let wy = 10; wy < height - 10; wy += 20) {
+          for (let wx = 5; wx < width - 10; wx += 15) {
+            windows.push(Math.random() > 0.45);
+          }
+        }
+      }
+      return { width, height, windowPattern, windows };
+    });
   }, []);
 
   // Initialize Canvas Size
   useEffect(() => {
     const handleResize = () => {
-      const maxWidth = 480; // Android phone width simulation
-      const width = Math.min(window.innerWidth, maxWidth);
-      const height = window.innerHeight;
+      const width = Math.max(280, Math.min(window.innerWidth || 480, 480));
+      const height = Math.max(360, window.innerHeight - 72);
       setCanvasSize({ width, height });
+      if (gameStateRef.current !== GameState.PLAYING) {
+        birdY.current = height / 2;
+      }
     };
     
     window.addEventListener('resize', handleResize);
@@ -68,9 +91,11 @@ const GameCanvas: React.FC = () => {
   }, []);
 
   const spawnPipe = useCallback(() => {
-    const minPipeHeight = 50;
-    const maxPipeHeight = canvasSize.height - PIPE_GAP - minPipeHeight - 50; // -50 for ground buffer
-    const topHeight = Math.floor(Math.random() * (maxPipeHeight - minPipeHeight + 1)) + minPipeHeight;
+    const minPipeHeight = 48;
+    const bottomReserve = GROUND_HEIGHT + 24;
+    const maxTop = canvasSize.height - bottomReserve - PIPE_GAP - minPipeHeight;
+    const span = Math.max(0, maxTop - minPipeHeight);
+    const topHeight = minPipeHeight + Math.floor(Math.random() * (span + 1));
     
     pipes.current.push({
       x: canvasSize.width,
@@ -78,16 +103,15 @@ const GameCanvas: React.FC = () => {
       passed: false,
     });
 
-    // Spawn Trash
+    // Spawn Trash centered in the gap
     if (Math.random() < TRASH_SPAWN_CHANCE) {
       const trashType = TRASH_TYPES[Math.floor(Math.random() * TRASH_TYPES.length)];
-      // Center in the gap vertically and horizontally in pipe
-      const trashY = topHeight + (PIPE_GAP / 2);
+      const gapCenter = topHeight + (PIPE_GAP / 2);
       
       trashItems.current.push({
         id: nextTrashId.current++,
         x: canvasSize.width + (PIPE_WIDTH / 2) - (TRASH_SIZE / 2),
-        y: trashY,
+        y: gapCenter - (TRASH_SIZE / 2),
         type: trashType,
         collected: false
       });
@@ -100,41 +124,59 @@ const GameCanvas: React.FC = () => {
     pipes.current = [];
     trashItems.current = [];
     score.current = 0;
+    spawnFrameRef.current = 0;
     setDisplayScore(0);
-    frameCountRef.current = 0;
     setAiCommentary("");
-  }, [canvasSize]);
+    setIsLoadingAi(false);
+    roastRequestRef.current += 1;
+  }, [canvasSize.height]);
 
-  const gameOver = useCallback(async () => {
+  const gameOver = useCallback(() => {
+    if (gameStateRef.current === GameState.GAME_OVER) return;
+    gameStateRef.current = GameState.GAME_OVER;
     setGameState(GameState.GAME_OVER);
-    if (score.current > highScore) {
-      setHighScore(score.current);
-      localStorage.setItem('trashPandaHighScore', score.current.toString());
+
+    const finalScore = score.current;
+    if (finalScore > highScoreRef.current) {
+      highScoreRef.current = finalScore;
+      setHighScore(finalScore);
+      try {
+        localStorage.setItem('trashPandaHighScore', finalScore.toString());
+      } catch {
+        // Storage can be blocked; the in-memory best still updates.
+      }
     }
 
-    // Trigger Gemini Commentary
+    const requestId = ++roastRequestRef.current;
     setIsLoadingAi(true);
-    try {
-      const roast = await getTrashPandaRoast(score.current);
-      setAiCommentary(roast);
-    } catch (e) {
-      setAiCommentary("Better luck next time, trash panda!");
-    } finally {
-      setIsLoadingAi(false);
-    }
-  }, [highScore]);
+    getTrashPandaRoast(finalScore)
+      .then((roast) => {
+        if (roastRequestRef.current === requestId) setAiCommentary(roast);
+      })
+      .catch(() => {
+        if (roastRequestRef.current === requestId) {
+          setAiCommentary("Better luck next time, trash panda!");
+        }
+      })
+      .finally(() => {
+        if (roastRequestRef.current === requestId) setIsLoadingAi(false);
+      });
+  }, []);
+
+  const startGame = useCallback(() => {
+    resetGame();
+    gameStateRef.current = GameState.PLAYING;
+    setGameState(GameState.PLAYING);
+    birdVelocity.current = JUMP_STRENGTH;
+  }, [resetGame]);
 
   const jump = useCallback(() => {
-    if (gameState === GameState.PLAYING) {
+    if (gameStateRef.current === GameState.PLAYING) {
       birdVelocity.current = JUMP_STRENGTH;
-    } else if (gameState === GameState.START || gameState === GameState.GAME_OVER) {
-      if (gameState === GameState.GAME_OVER) {
-        resetGame();
-      }
-      setGameState(GameState.PLAYING);
-      birdVelocity.current = JUMP_STRENGTH;
+      return;
     }
-  }, [gameState, resetGame]);
+    startGame();
+  }, [startGame]);
 
   const drawRaccoon = (ctx: CanvasRenderingContext2D, x: number, y: number, rotation: number, velocity: number) => {
     ctx.save();
@@ -276,31 +318,31 @@ const GameCanvas: React.FC = () => {
 
     // Scrolling City Skyline (Parallax)
     const scrollSpeed = 0.5; // Slower than pipes
-    const offset = (frameCountRef.current * scrollSpeed) % width;
+    const totalWidth = buildings.reduce((sum, building) => sum + building.width, 0) || 1;
+    const offset = (frameCountRef.current * scrollSpeed) % totalWidth;
     
     ctx.fillStyle = BUILDING_COLOR;
     let currentX = -offset;
     
     // Draw enough buildings to fill screen + buffer
     let i = 0;
-    while(currentX < width) {
+    while (currentX < width && i < buildings.length * 4) {
         const building = buildings[i % buildings.length];
         const bHeight = building.height;
         const bWidth = building.width;
         
-        ctx.fillRect(currentX, height - bHeight - 20, bWidth + 2, bHeight + 20); // +2 to cover gaps
+        ctx.fillStyle = BUILDING_COLOR;
+        ctx.fillRect(currentX, height - bHeight - GROUND_HEIGHT, bWidth + 2, bHeight + GROUND_HEIGHT); // +2 to cover gaps
         
-        // Windows
         if (building.windowPattern) {
-           ctx.fillStyle = '#4a5166';
-           for(let wy = 10; wy < bHeight - 10; wy += 20) {
-              for(let wx = 5; wx < bWidth - 10; wx += 15) {
-                  if (Math.random() > 0.3) { // Flicker effect potentially, but keeping static here for performance
-                      ctx.fillRect(currentX + wx, height - bHeight - 20 + wy, 6, 8);
-                  }
+           let windowIndex = 0;
+           for (let wy = 10; wy < bHeight - 10; wy += 20) {
+              for (let wx = 5; wx < bWidth - 10; wx += 15) {
+                  const lit = building.windows[windowIndex++];
+                  ctx.fillStyle = lit ? '#f3d36b' : '#12141f';
+                  ctx.fillRect(currentX + wx, height - bHeight - GROUND_HEIGHT + wy, 6, 8);
               }
            }
-           ctx.fillStyle = BUILDING_COLOR; // Reset
         }
 
         currentX += bWidth;
@@ -309,18 +351,20 @@ const GameCanvas: React.FC = () => {
   };
 
   const update = useCallback(() => {
-    if (gameState !== GameState.PLAYING) {
+    frameCountRef.current++;
+
+    if (gameStateRef.current !== GameState.PLAYING) {
       draw();
-      return; 
+      return;
     }
 
     // Physics
-    birdVelocity.current += GRAVITY;
+    birdVelocity.current = Math.min(birdVelocity.current + GRAVITY, 14);
     birdY.current += birdVelocity.current;
 
     // Spawn Pipes and Trash
-    frameCountRef.current++;
-    if (frameCountRef.current % PIPE_SPAWN_RATE === 0) {
+    spawnFrameRef.current++;
+    if (spawnFrameRef.current % PIPE_SPAWN_RATE === 0) {
       spawnPipe();
     }
 
@@ -338,18 +382,22 @@ const GameCanvas: React.FC = () => {
     // Remove off-screen or collected trash
     trashItems.current = trashItems.current.filter(item => item.x > -50 && !item.collected);
 
-
-    // Collision Detection
+    const groundY = canvasSize.height - GROUND_HEIGHT;
     const birdRect = {
-      left: canvasSize.width / 2 - BIRD_SIZE / 2 + 5, // +5 padding
+      left: canvasSize.width / 2 - BIRD_SIZE / 2 + 5,
       right: canvasSize.width / 2 + BIRD_SIZE / 2 - 5,
       top: birdY.current - BIRD_SIZE / 2 + 5,
       bottom: birdY.current + BIRD_SIZE / 2 - 5
     };
 
     // Ground/Ceiling
-    if (birdRect.bottom >= canvasSize.height || birdRect.top <= 0) {
+    if (birdRect.bottom >= groundY || birdRect.top <= 0) {
+      if (birdRect.bottom >= groundY) {
+        birdY.current = groundY - BIRD_SIZE / 2 + 5;
+        birdVelocity.current = 0;
+      }
       gameOver();
+      draw();
       return;
     }
 
@@ -361,6 +409,7 @@ const GameCanvas: React.FC = () => {
       if (birdRect.right > pipeLeft && birdRect.left < pipeRight) {
         if (birdRect.top < pipe.topHeight || birdRect.bottom > pipe.topHeight + PIPE_GAP) {
           gameOver();
+          draw();
           return;
         }
       }
@@ -373,28 +422,26 @@ const GameCanvas: React.FC = () => {
     }
 
     // Trash Collection
-    // Simple box or circle collision
     const raccoonCenterX = canvasSize.width / 2;
     const raccoonCenterY = birdY.current;
     const raccoonRadius = BIRD_SIZE / 2;
     const trashRadius = TRASH_SIZE / 2;
 
     for (const item of trashItems.current) {
+      if (item.collected) continue;
       const dx = (item.x + trashRadius) - raccoonCenterX;
       const dy = (item.y + trashRadius) - raccoonCenterY;
-      const distance = Math.sqrt(dx*dx + dy*dy);
+      const distance = Math.sqrt(dx * dx + dy * dy);
 
       if (distance < raccoonRadius + trashRadius) {
         item.collected = true;
         score.current += SCORE_PER_TRASH;
         setDisplayScore(score.current);
-        // Could play a sound here
       }
     }
 
     draw();
-    requestRef.current = requestAnimationFrame(update);
-  }, [gameState, canvasSize, spawnPipe, gameOver, buildings]);
+  }, [canvasSize, spawnPipe, gameOver, buildings]);
 
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
@@ -453,11 +500,12 @@ const GameCanvas: React.FC = () => {
 
     // 4. Draw Ground
     ctx.fillStyle = '#1e272e'; // Dark asphalt
-    ctx.fillRect(0, canvas.height - 20, canvas.width, 20);
+    ctx.fillRect(0, canvas.height - GROUND_HEIGHT, canvas.width, GROUND_HEIGHT);
     // Road markings
     ctx.fillStyle = '#f1c40f'; // Yellow stripe
-    for(let i=0; i<canvas.width; i+=40) {
-        ctx.fillRect((i - (frameCountRef.current * PIPE_SPEED) % 40), canvas.height - 12, 20, 4);
+    const stripeOffset = (frameCountRef.current * PIPE_SPEED) % 40;
+    for (let i = -40; i < canvas.width; i += 40) {
+        ctx.fillRect(i - stripeOffset, canvas.height - GROUND_HEIGHT / 2 - 2, 20, 4);
     }
 
     // 5. Draw Raccoon
@@ -466,17 +514,24 @@ const GameCanvas: React.FC = () => {
 
   }, [canvasSize, buildings]); 
 
-  // Loop Management
+  // Loop Management. The frame loop always runs; physics consults gameStateRef
+  // so a collision can stop the round before the next React render.
   useEffect(() => {
-    requestRef.current = requestAnimationFrame(update);
-    return () => cancelAnimationFrame(requestRef.current);
+    let frame = 0;
+    const loop = () => {
+      update();
+      frame = requestAnimationFrame(loop);
+    };
+    frame = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(frame);
   }, [update]);
 
   // Key Listeners
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.code === 'Space' || e.code === 'ArrowUp') {
-        e.preventDefault(); // Stop scrolling
+      if (e.repeat) return;
+      if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'Enter') {
+        e.preventDefault();
         jump();
       }
     };
@@ -486,8 +541,16 @@ const GameCanvas: React.FC = () => {
 
   // Load high score
   useEffect(() => {
-    const saved = localStorage.getItem('trashPandaHighScore');
-    if (saved) setHighScore(parseInt(saved));
+    try {
+      const saved = localStorage.getItem('trashPandaHighScore');
+      const parsed = saved ? parseInt(saved, 10) : 0;
+      if (parsed > 0) {
+        highScoreRef.current = parsed;
+        setHighScore(parsed);
+      }
+    } catch {
+      // Ignore unavailable storage.
+    }
   }, []);
 
   return (
@@ -495,7 +558,7 @@ const GameCanvas: React.FC = () => {
       
       {/* Game Container */}
       <div 
-        className="relative shadow-2xl overflow-hidden bg-black ring-8 ring-gray-800 rounded-lg cursor-pointer"
+        className="relative shadow-2xl overflow-hidden bg-black ring-8 ring-gray-800 rounded-lg cursor-pointer touch-none"
         style={{ width: canvasSize.width, height: canvasSize.height }}
         onPointerDown={(e) => {
           e.preventDefault(); // Prevent default touch actions
@@ -523,7 +586,10 @@ const GameCanvas: React.FC = () => {
           <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 backdrop-blur-sm z-20">
             <div className="bg-gray-800/90 p-6 rounded-2xl shadow-xl text-center animate-bounce-slow border-4 border-gray-600 max-w-[80%]">
               <h1 className="pixel-font text-2xl md:text-3xl text-orange-500 mb-2 leading-relaxed">TRASH PANDA<br/>FLIGHT</h1>
-              <p className="text-gray-300 mb-6 font-bold text-sm">Tap to Jump<br/>Collect Trash for Bonus!</p>
+              <p className="text-gray-300 mb-4 font-bold text-sm">Tap, click, or press space<br/>Collect trash for bonus points</p>
+              {highScore > 0 && (
+                <p className="pixel-font text-[10px] text-yellow-400 mb-4">BEST {highScore}</p>
+              )}
               <div className="flex justify-center gap-4 text-3xl mb-4">
                   <span>🍕</span><span>🦴</span><span>🍎</span>
               </div>
@@ -569,7 +635,7 @@ const GameCanvas: React.FC = () => {
                </div>
 
                <button 
-                 onClick={(e) => { e.stopPropagation(); resetGame(); setGameState(GameState.PLAYING); }}
+                 onPointerDown={(e) => { e.stopPropagation(); e.preventDefault(); startGame(); }}
                  className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg flex items-center justify-center gap-2 transition-colors border-b-4 border-green-800 active:border-b-0 active:translate-y-1"
                >
                  <Play size={20} />

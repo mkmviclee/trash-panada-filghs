@@ -7,15 +7,19 @@
     "dev": "vite",
     "build": "vite build",
     "build:pages": "vite build --base ./ && cp dist/index.dev.html index.html && rm -rf assets && cp -a dist/assets assets && touch .nojekyll",
+    "build:android": "vite build --base ./ && cp dist/index.dev.html dist/index.html && cap sync android",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@capacitor/android": "^8.6.0",
+    "@capacitor/core": "^8.6.0",
     "@google/genai": "^1.30.0",
     "lucide-react": "^0.554.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },
   "devDependencies": {
+    "@capacitor/cli": "^8.6.0",
     "@tailwindcss/vite": "^4.3.5",
     "@types/node": "^22.14.0",
     "@vitejs/plugin-react": "^5.0.0",

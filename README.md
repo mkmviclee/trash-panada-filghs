@@ -38,3 +38,13 @@ Open http://localhost:3000.
 | `npm run build:pages` | Rebuild the bundle GitHub Pages serves. |
 
 GitHub Pages publishes the repository root of this branch. `npm run build:pages` rewrites the root `index.html` and `assets/` with relative paths, and refreshes `.nojekyll`. Commit those files after a pages build.
+
+## Android
+
+`npm run build:android` copies a fresh web build into the Android project. With the Android SDK installed:
+
+```bash
+cd android && ./gradlew assembleDebug
+```
+
+The debug APK is `android/app/build/outputs/apk/debug/app-debug.apk`. The package name is `com.trashpanda.flight`.

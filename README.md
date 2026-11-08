@@ -24,14 +24,6 @@ npm run dev
 
 Open http://localhost:3000.
 
-A Gemini key is optional. Add it to `.env.local` (this file stays uncommitted):
-
-```bash
-GEMINI_API_KEY=your_key
-```
-
-With a key, the game-over line comes from Gemini and falls back to a built-in roast if the request fails. With no key, the roast is always one of the built-in lines.
-
 ## Scripts
 
 | Command | What it does |

@@ -1,20 +1,44 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# Trash Panda Flight
 
-# Run and deploy your AI Studio app
+A night-city flier. Keep the raccoon in the air, slip through the pipes, and grab trash on the way. Crash, and a raccoon roasts the score.
 
-This contains everything you need to run your app locally.
+Play it: https://mkmviclee.github.io/trash-panada-filghs/
 
-View your app in AI Studio: https://ai.studio/apps/drive/1ojerSn8fXMEWAzPguztPVho5jCbgncl4
+## How to play
 
-## Run Locally
+Click, tap, or press Space, Arrow Up, or Enter to flap. The first press starts the round.
 
-**Prerequisites:**  Node.js
+- Passing a pipe scores 1.
+- Trash floating in the gap scores 2.
+- The ceiling, the road, and the pipes all end the round.
+- The best score stays in this browser.
 
+## Run locally
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+Requires Node.js.
+
+```bash
+npm ci
+npm run dev
+```
+
+Open http://localhost:3000.
+
+A Gemini key is optional. Add it to `.env.local` (this file stays uncommitted):
+
+```bash
+GEMINI_API_KEY=your_key
+```
+
+With a key, the game-over line comes from Gemini and falls back to a built-in roast if the request fails. With no key, the roast is always one of the built-in lines.
+
+## Scripts
+
+| Command | What it does |
+| --- | --- |
+| `npm run dev` | Dev server on port 3000. Uses `index.dev.html`. |
+| `npm run build` | Production build in `dist/`. |
+| `npm run preview` | Serve the `dist/` build. |
+| `npm run build:pages` | Rebuild the bundle GitHub Pages serves. |
+
+GitHub Pages publishes the repository root of this branch. `npm run build:pages` rewrites the root `index.html` and `assets/` with relative paths, and refreshes `.nojekyll`. Commit those files after a pages build.
